@@ -19,8 +19,8 @@ import vgg_model
 import utils
 
 # parameters to manage experiments
-STYLE = 'guernica'
-CONTENT = 'deadpool'
+STYLE = 'starry_night'
+CONTENT = 'ahriy'
 STYLE_IMAGE = 'styles/' + STYLE + '.jpg'
 CONTENT_IMAGE = 'content/' + CONTENT + '.jpg'
 IMAGE_HEIGHT = 250
@@ -34,7 +34,7 @@ W = [0.5, 1.0, 1.5, 3.0, 4.0] # give more weights to deeper layers.
 # Layer used for content features. You can change this.
 CONTENT_LAYER = 'conv4_2'
 
-ITERS = 300
+ITERS = 1000
 LR = 2.0
 
 SAVE_EVERY = 20
@@ -55,9 +55,9 @@ EXPECTED_BYTES = 534904783
 def _create_content_loss(p, f):
     """ Calculate the loss between the feature representation of the
     content image and the generated image.
-    
-    Inputs: 
-        p, f are just P, F in the paper 
+
+    Inputs:
+        p, f are just P, F in the paper
         (read the assignment handout if you're confused)
         Note: we won't use the coefficient 0.5 as defined in the paper
         but the coefficient as defined in the assignment handout.
@@ -65,10 +65,10 @@ def _create_content_loss(p, f):
         the content loss
 
     """
-    sum = tf.cast(tf.reduce_sum(tf.square(p - f)), dtype=tf.float32)
-    coeff = tf.cast(1 / (4 * tf.reduce_prod(p.shape, 0)), dtype=tf.float32)
-    return sum * coeff
-
+    # sum = tf.cast(tf.reduce_sum(tf.square(p - f)), dtype=tf.float32)
+    # coeff = tf.cast(1 / (4 * tf.reduce_prod(p.shape, 0)), dtype=tf.float32)
+    # return sum * coeff
+    return tf.reduce_sum((f - p) ** 2) / (4.0 * p.size)
 def _gram_matrix(F, N, M):
     """ Create and return the gram matrix for tensor F
         Hint: you'll first have to reshape F
@@ -88,20 +88,25 @@ def _single_style_loss(a, g):
         2. we'll use the same coefficient for style loss as in the paper
         3. a and g are feature representation, not gram matrices
     """
-    N = a.shape[3]
-    M = a.shape[1] * a.shape[2]
+    # N = a.shape[3]
+    # M = a.shape[1] * a.shape[2]
+    # A = _gram_matrix(a, N, M)
+    # G = _gram_matrix(g, N, M)
+    # print(A)
+    # E = tf.reduce_sum(tf.square(G - A))
+    # coeff = tf.cast(1 / (4 * N * N * M * M), dtype=tf.float32)
+    # return E * coeff
+    N = a.shape[3] # number of filters
+    M = a.shape[1] * a.shape[2] # height times width of the feature map
     A = _gram_matrix(a, N, M)
     G = _gram_matrix(g, N, M)
-    E = tf.reduce_sum(tf.square(G - A))
-    coeff = tf.cast(1 / (4 * N * N * M * M), dtype=tf.float32)
-    return E * coeff
-
+    return tf.reduce_sum((G - A) ** 2 / ((2 * N * M) ** 2))
 def _create_style_loss(A, model):
     """ Return the total style loss
     """
     n_layers = len(STYLE_LAYERS)
     E = [_single_style_loss(A[i], model[STYLE_LAYERS[i]]) for i in range(n_layers)]
-    
+
     ###############################
     ## TO DO: return total style loss
     L = 0
@@ -119,11 +124,11 @@ def _create_losses(model, input_image, content_image, style_image):
 
         with tf.Session() as sess:
             sess.run(input_image.assign(style_image))
-            A = sess.run([model[layer_name] for layer_name in STYLE_LAYERS])                              
+            A = sess.run([model[layer_name] for layer_name in STYLE_LAYERS])
         style_loss = _create_style_loss(A, model)
 
         ##########################################
-        ## TO DO: create total loss. 
+        ## TO DO: create total loss.
         ## Hint: don't forget the content loss and style loss weights
         total_loss = content_loss + 20 * style_loss
         ##########################################
@@ -149,7 +154,7 @@ def train(model, generated_image, initial_image):
     with tf.Session() as sess:
         saver = tf.train.Saver()
         ###############################
-        ## TO DO: 
+        ## TO DO:
         ## 1. initialize your variables
         ## 2. create writer to write your graph
         ###############################
@@ -162,24 +167,31 @@ def train(model, generated_image, initial_image):
         if ckpt and ckpt.model_checkpoint_path:
             saver.restore(sess, ckpt.model_checkpoint_path)
         initial_step = model['global_step'].eval()
-        
+
         start_time = time.time()
         for index in range(initial_step, ITERS):
             if index >= 5 and index < 20:
                 skip_step = 10
             elif index >= 20:
                 skip_step = 20
-            
+
             sess.run(model['optimizer'])
             if (index + 1) % skip_step == 0:
                 ###############################
                 ## TO DO: obtain generated image and loss
-                gen_image, total_loss, summary = sess.run([generated_image, model['total_loss'], model['summary_op']])
+                gen_image, style_loss, content_loss, total_loss, summary = \
+                    sess.run([generated_image,
+                              model['style_loss'],
+                              model['content_loss'],
+                              model['total_loss'],
+                              model['summary_op']])
                 ###############################
                 gen_image = gen_image + MEAN_PIXELS
                 writer.add_summary(summary, global_step=index)
                 print('Step {}\n   Sum: {:5.1f}'.format(index + 1, np.sum(gen_image)))
-                print('   Loss: {:5.1f}'.format(total_loss))
+                print(' style_loss: {:5.1f}'.format(style_loss))
+                print(' content_loss: {:5.1f}'.format(content_loss))
+                print(' total_loss: {:5.1f}'.format(total_loss))
                 print('   Time: {}'.format(time.time() - start_time))
                 start_time = time.time()
 
@@ -194,19 +206,19 @@ def main():
         # use variable instead of placeholder because we're training the intial image to make it
         # look like both the content image and the style image
         input_image = tf.Variable(np.zeros([1, IMAGE_HEIGHT, IMAGE_WIDTH, 3]), dtype=tf.float32)
-    
+
     utils.download(VGG_DOWNLOAD_LINK, VGG_MODEL, EXPECTED_BYTES)
     utils.make_dir('checkpoints')
     utils.make_dir('outputs')
     model = vgg_model.load_vgg(VGG_MODEL, input_image)
     model['global_step'] = tf.Variable(0, dtype=tf.int32, trainable=False, name='global_step')
-    
+
     content_image = utils.get_resized_image(CONTENT_IMAGE, IMAGE_HEIGHT, IMAGE_WIDTH)
     content_image = content_image - MEAN_PIXELS
     style_image = utils.get_resized_image(STYLE_IMAGE, IMAGE_HEIGHT, IMAGE_WIDTH)
     style_image = style_image - MEAN_PIXELS
 
-    model['content_loss'], model['style_loss'], model['total_loss'] = _create_losses(model, 
+    model['content_loss'], model['style_loss'], model['total_loss'] = _create_losses(model,
                                                     input_image, content_image, style_image)
     ###############################
     ## TO DO: create optimizer
