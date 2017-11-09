@@ -88,15 +88,12 @@ def training(vocab, seq, loss, optimizer, global_step, temp, sample, in_state, o
         writer = tf.summary.FileWriter('graphs/gist', sess.graph)
         sess.run(tf.global_variables_initializer())
         
-        # ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/arvix/checkpoint'))
-        # if ckpt and ckpt.model_checkpoint_path:
-        #     saver.restore(sess, ckpt.model_checkpoint_path)
+        ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/arvix/checkpoint'))
+        if ckpt and ckpt.model_checkpoint_path:
+            saver.restore(sess, ckpt.model_checkpoint_path)
         
-        # iteration = global_step.eval()
-        iteration = 0
+        iteration = global_step.eval()
         for batch in read_batch(read_data(DATA_PATH, vocab)):
-            # if iteration == 1:
-            #     break
 
             batch_loss, _, seq_length, logits_, seq_hot_ = sess.run([loss, optimizer, length, logits, seq_hot], {seq: batch})
             # print('Iter {} \nlogits \n{}  \nLoss \n{} \nTime \n{} \nseq_hot \n{}'.format(iteration, logits_[:, :-1], batch_loss, time.time() - start, seq_hot_[:, 1:]))
@@ -106,12 +103,12 @@ def training(vocab, seq, loss, optimizer, global_step, temp, sample, in_state, o
                 print('Iter {} \n Loss {}. Time {}'.format(iteration, batch_loss, time.time() - start))
                 online_inference(sess, vocab, seq, sample, temp, in_state, out_state)
                 start = time.time()
-                #saver.save(sess, 'checkpoints/arvix/char-rnn', iteration)
+                saver.save(sess, 'checkpoints/arvix/char-rnn', iteration)
 
             iteration += 1
 
 
-def online_inference(sess, vocab, seq, sample, temp, in_state, out_state, seed='R'):
+def online_inference(sess, vocab, seq, sample, temp, in_state, out_state, seed='x'):
     """ Generate sequence one character at a time, based on the previous character
     """
     sentence = seed
