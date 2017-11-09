@@ -13,7 +13,7 @@ sys.path.append('..')
 import time
 
 import tensorflow as tf
-
+from tensorflow.python import debug as tf_debug
 import utils
 
 DATA_PATH = 'data/arvix_abstracts.txt'
@@ -55,43 +55,63 @@ def create_rnn(seq, hidden_size=HIDDEN_SIZE):
     # this line to calculate the real length of seq
     # all seq are padded to be of the same length which is NUM_STEPS
     length = tf.reduce_sum(tf.reduce_max(tf.sign(seq), 2), 1)
+
     output, out_state = tf.nn.dynamic_rnn(cell, seq, length, in_state)
-    return output, in_state, out_state
+    # output is [BATCH_SIZE, NUM_STEPS, HIDDEN_SIZE]
+    print("shape of output is {}".format(output.shape))
+    return output, in_state, out_state, length
 
 def create_model(seq, temp, vocab, hidden=HIDDEN_SIZE):
+    # seq is [BATCH_SIZE, NUM_STEPS, len(vocab)]
     seq = tf.one_hot(seq, len(vocab))
-    output, in_state, out_state = create_rnn(seq, hidden)
+    output, in_state, out_state, length = create_rnn(seq, hidden)
     # fully_connected is syntactic sugar for tf.matmul(w, output) + b
     # it will create w and b for us
+    # output is [BATCH_SIZE, NUM_STEPS, HIDDEN_SIZE]
+    # w is [HIDDEN_SIZE, len(vocab)]
     logits = tf.contrib.layers.fully_connected(output, len(vocab), None)
+    # logits is [BATCH_SIZE, NUM_STEPS, len(vocab)]
+    print("shape of logits is {}".format(logits.shape))
+    # compare with itself(right shift one word)
     loss = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(logits=logits[:, :-1], labels=seq[:, 1:]))
     # sample the next character from Maxwell-Boltzmann Distribution with temperature temp
     # it works equally well without tf.exp
-    sample = tf.multinomial(tf.exp(logits[:, -1] / temp), 1)[:, 0] 
-    return loss, sample, in_state, out_state
+    # samle is [BATCH_SIZE, 1]
+    sample = tf.multinomial(tf.exp(logits[:, -1] / temp), 1)[:, 0]
 
-def training(vocab, seq, loss, optimizer, global_step, temp, sample, in_state, out_state):
+    return loss, sample, in_state, out_state, length, logits, seq
+
+def training(vocab, seq, loss, optimizer, global_step, temp, sample, in_state, out_state, length, logits, seq_hot):
     saver = tf.train.Saver()
     start = time.time()
     with tf.Session() as sess:
         writer = tf.summary.FileWriter('graphs/gist', sess.graph)
         sess.run(tf.global_variables_initializer())
         
-        ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/arvix/checkpoint'))
-        if ckpt and ckpt.model_checkpoint_path:
-            saver.restore(sess, ckpt.model_checkpoint_path)
+        # ckpt = tf.train.get_checkpoint_state(os.path.dirname('checkpoints/arvix/checkpoint'))
+        # if ckpt and ckpt.model_checkpoint_path:
+        #     saver.restore(sess, ckpt.model_checkpoint_path)
         
-        iteration = global_step.eval()
+        # iteration = global_step.eval()
+        iteration = 0
         for batch in read_batch(read_data(DATA_PATH, vocab)):
-            batch_loss, _ = sess.run([loss, optimizer], {seq: batch})
+            # if iteration == 1:
+            #     break
+
+            batch_loss, _, seq_length, logits_, seq_hot_ = sess.run([loss, optimizer, length, logits, seq_hot], {seq: batch})
+            # print('Iter {} \nlogits \n{}  \nLoss \n{} \nTime \n{} \nseq_hot \n{}'.format(iteration, logits_[:, :-1], batch_loss, time.time() - start, seq_hot_[:, 1:]))
+            # online_inference(sess, vocab, seq, sample, temp, in_state, out_state)
+            start = time.time()
             if (iteration + 1) % SKIP_STEP == 0:
-                print('Iter {}. \n    Loss {}. Time {}'.format(iteration, batch_loss, time.time() - start))
+                print('Iter {} \n Loss {}. Time {}'.format(iteration, batch_loss, time.time() - start))
                 online_inference(sess, vocab, seq, sample, temp, in_state, out_state)
                 start = time.time()
-                saver.save(sess, 'checkpoints/arvix/char-rnn', iteration)
+                #saver.save(sess, 'checkpoints/arvix/char-rnn', iteration)
+
             iteration += 1
 
-def online_inference(sess, vocab, seq, sample, temp, in_state, out_state, seed='T'):
+
+def online_inference(sess, vocab, seq, sample, temp, in_state, out_state, seed='R'):
     """ Generate sequence one character at a time, based on the previous character
     """
     sentence = seed
@@ -110,14 +130,15 @@ def main():
     vocab = (
             " $%'()+,-./0123456789:;=?ABCDEFGHIJKLMNOPQRSTUVWXYZ"
             "\\^_abcdefghijklmnopqrstuvwxyz{|}")
+    print("length of vocab is {}".format(len(vocab)))
     seq = tf.placeholder(tf.int32, [None, None])
     temp = tf.placeholder(tf.float32)
-    loss, sample, in_state, out_state = create_model(seq, temp, vocab)
+    loss, sample, in_state, out_state, length, logits, seq_hot = create_model(seq, temp, vocab)
     global_step = tf.Variable(0, dtype=tf.int32, trainable=False, name='global_step')
     optimizer = tf.train.AdamOptimizer(LR).minimize(loss, global_step=global_step)
     utils.make_dir('checkpoints')
     utils.make_dir('checkpoints/arvix')
-    training(vocab, seq, loss, optimizer, global_step, temp, sample, in_state, out_state)
+    training(vocab, seq, loss, optimizer, global_step, temp, sample, in_state, out_state, length, logits, seq_hot)
     
 if __name__ == '__main__':
     main()
